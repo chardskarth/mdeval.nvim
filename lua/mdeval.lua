@@ -48,7 +48,7 @@ local function get_timeout_command(cmd, timeout)
     timeout_cmd = "timeout"
   end
   return get_command(
-    string.format("%s %d sh -c '%s' 2>&1", timeout_cmd, timeout, cmd)
+    string.format("%s %d '%s' 2>&1", timeout_cmd, timeout, cmd)
   )
 end
 
@@ -64,43 +64,33 @@ local function run_compiler(command, extension, temp_filename, code, timeout)
 
   -- Remove temp files left over from the previous compilation.
   local handle =
-    io.popen(get_command(string.format("rm -f %s 2>&1", a_out_filepath)))
+  io.popen(get_command(string.format("rm -f %s 2>&1", a_out_filepath)))
   handle:close()
 
-  local handle = io.popen(
+  handle = io.popen(
     get_command(
       string.format(
-        "%s %s -o %s 2>&1; echo $?",
+        "%s %s 2>&1 >> %s; echo $?",
         table.concat(command, " "),
         src_filepath,
         a_out_filepath
       )
     )
   )
-  local result = {}
-  local lastline
-  for line in handle:lines() do
-    result[#result + 1] = line
-    lastline = line
-  end
-  if #result > 0 then
-    table.remove(result, #result)
-  end
-  if tonumber(lastline) ~= 0 then
-    result = sanitize_output(filepath, result)
-    return result, false
-  end
+  handle:close()
 
-  if timeout ~= -1 then
-    handle = io.popen(get_timeout_command(a_out_filepath, timeout))
-  else
-    handle = io.popen(get_command(string.format("%s 2>&1", a_out_filepath)))
-  end
-  result = {}
+  handle = io.popen(
+    get_command(
+      string.format("cat %s", a_out_filepath)
+    )
+  )
+
+  local result = {}
   for line in handle:lines() do
     result[#result + 1] = line
   end
   handle:close()
+
 
   return result, true
 end
@@ -160,6 +150,10 @@ local function eval_code(lang_name, lang_options, temp_filename, code, timeout)
   -- Prepend generated code with the default_header.
   if lang_options.default_header then
     code = lang_options.default_header .. "\n" .. code
+  end
+
+  if lang_options.main_wrap ~= nil then
+    code = lang_options.main_wrap:gsub("${1}", code)
   end
 
   if lang_options.exec_type == "compiled" then
@@ -238,10 +232,9 @@ local function remove_previous_output(linenr)
 
     -- Remove extra new line at the end.
     local num_lines = fn.line("$")
-    if
-      end_linenr + 2 < num_lines
-      and fn.getline(end_linenr + 1) == ""
-      and fn.getline(end_linenr + 2) == ""
+    if end_linenr + 2 < num_lines
+        and fn.getline(end_linenr + 1) == ""
+        and fn.getline(end_linenr + 2) == ""
     then
       end_linenr = end_linenr + 1
     end
@@ -258,11 +251,11 @@ local function write_output(linenr, out)
   local out_table = { "" }
   if out == nil then
     out_table[#out_table + 1] =
-      string.format("%s `<no output>`", M.opts.results_label)
+    string.format("%s `<no output>`", M.opts.results_label)
   else
     if #out == 1 then
       out_table[#out_table + 1] =
-        string.format("%s `%s`", M.opts.results_label, out[1])
+      string.format("%s `%s`", M.opts.results_label, out[1])
     else
       out_table[#out_table + 1] = M.opts.results_label
       out_table[#out_table + 1] = code_block_start()
@@ -381,10 +374,6 @@ function M:eval_code_block()
   end
 
   local code = parse_code(linenr_from, linenr_until - 1)
-  if code == "" then
-    print("No code found.")
-    return
-  end
 
   local lang_name, lang_options = find_lang_options(lang_code)
   if lang_name == nil or lang_options == nil then
@@ -412,10 +401,9 @@ function M:eval_code_block()
     end
   end
 
-  local temp_filename =
-    generate_temp_filename(api.nvim_buf_get_name(0), linenr_from, linenr_until)
+  local temp_filename = generate_temp_filename(api.nvim_buf_get_name(0), linenr_from, linenr_until)
   local eval_output, rc =
-    eval_code(lang_name, lang_options, temp_filename, code, M.opts.exec_timeout)
+  eval_code(lang_name, lang_options, temp_filename, code, M.opts.exec_timeout)
   remove_previous_output(linenr_until + 1)
   write_output(linenr_until, eval_output)
 end
